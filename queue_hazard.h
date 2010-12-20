@@ -41,10 +41,10 @@ struct QueueBase {
                hazard::hazard_ptr<NodeBase>& next_hp) {
     for (;;) {
       head_hp.load_from(&head_);
-      NodeBase* tail = atomic::atomic_load_acquire(&tail_);
       NodeBase* next = atomic::atomic_load_acquire(&head_hp->next);
       if (!next)
         return false;
+      NodeBase* tail = atomic::atomic_load_relaxed(&tail_);
       if (head_hp.get() == tail)
         atomic::atomic_compare_and_set(&tail_, tail, next);
 
