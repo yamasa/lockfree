@@ -15,7 +15,7 @@
 
 // スレッド毎のハザードポインタの最大数。
 #ifndef HAZARD_PTR_SIZE
-#define HAZARD_PTR_SIZE 2
+#define HAZARD_PTR_SIZE 3
 #endif
 
 #ifndef HAZARD_PTR_FLUSH_DEFAULT
