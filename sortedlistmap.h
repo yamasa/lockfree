@@ -93,7 +93,7 @@ class SortedListMap {
       prev_next = curr_next;
       goto retry3;
     }
-    return static_cast<Node&>(*curr_hp).key == key;
+    return !(key < static_cast<Node&>(*curr_hp).key);
   }
 
   /**
