@@ -18,10 +18,6 @@
 #define HAZARD_PTR_SIZE 3
 #endif
 
-#ifndef HAZARD_PTR_FLUSH_DEFAULT
-#define HAZARD_PTR_FLUSH_DEFAULT 16
-#endif
-
 #ifndef CACHE_LINE_SIZE
 #define CACHE_LINE_SIZE 64
 #endif
@@ -72,7 +68,7 @@ struct HazardRecord {
 
 class LocalData {
  public:
-  LocalData(std::size_t flush_threshold);
+  LocalData();
 
   LocalData(const LocalData&) = delete;
   LocalData& operator=(const LocalData&) = delete;
@@ -97,7 +93,6 @@ class LocalData {
 
  private:
   HazardRecord* const hazard_record_;
-  std::size_t const flush_threshold_;
   std::size_t hp_used_;
 };
 
@@ -316,8 +311,7 @@ class hazard_ptr {
  */
 class hazard_context {
  public:
-  hazard_context(std::size_t flush_threshold = HAZARD_PTR_FLUSH_DEFAULT)
-      : local_data_(flush_threshold) {
+  hazard_context() : local_data_() {
   }
 
   hazard_context(const hazard_context&) = delete;

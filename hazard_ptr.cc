@@ -3,6 +3,10 @@
 
 #include "hazard_ptr.h"
 
+#ifndef HAZARD_FLUSH_SIZE
+#define HAZARD_FLUSH_SIZE 16
+#endif
+
 namespace hazard {
 namespace detail {
 
@@ -150,10 +154,8 @@ __thread LocalData* local_data(nullptr);
 
 }
 
-LocalData::LocalData(std::size_t threshold)
-    : hazard_record_(hazard_root.allocateRecord()),
-      flush_threshold_(threshold), hp_used_(0) {
-  hazard_record_->retired.reserve(threshold);
+LocalData::LocalData()
+    : hazard_record_(hazard_root.allocateRecord()), hp_used_(0) {
   assert(local_data == nullptr);
   local_data = this;
 }
@@ -177,7 +179,7 @@ LocalData::addRetired(void* obj, void* alloc, deleter_func del) {
   if (!obj) return;
   RetiredItems& retired = hazard_record_->retired;
   retired.push_back({obj, alloc, del});
-  if (retired.size() >= flush_threshold_)
+  if (retired.size() >= HAZARD_FLUSH_SIZE)
     hazard_root.flushRetired(retired);
 }
 
