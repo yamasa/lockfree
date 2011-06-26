@@ -58,43 +58,29 @@ typedef const void* hp_t;
 
 struct HazardRecord {
   HazardRecord* next;
+  std::size_t hp_reserved;
   std::array<hp_t, HAZARD_PTR_SIZE> hp;
   RetiredItems retired;
   int active;
 
-  HazardRecord() : hp(), active(1) {
-  }
-} __attribute__((aligned(CACHE_LINE_SIZE)));
+  HazardRecord();
 
-class LocalData {
- public:
-  LocalData();
+  static HazardRecord& getLocalRecord();
 
-  LocalData(const LocalData&) = delete;
-  LocalData& operator=(const LocalData&) = delete;
+  static void clearLocalRecord();
 
-  ~LocalData();
+  std::size_t reserveHp(std::size_t num);
 
-  static LocalData& getLocalData();
+  void returnHp(std::size_t start, std::size_t num);
 
-  hp_t* allocateHpArray(std::size_t n) {
-    hp_t* array = &hazard_record_->hp[hp_used_];
-    hp_used_ += n;
-    assert(hp_used_ <= hazard_record_->hp.size());
-    return array;
-  }
-
-  void deallocateHpArray(hp_t* array, std::size_t n) {
-    hp_used_ -= n;
-    assert(array == &hazard_record_->hp[hp_used_]);
+  hp_t* getHp(std::size_t pos) {
+    assert(pos < hp_reserved);
+    return &hp[pos];
   }
 
   void addRetired(void* obj, void* alloc, deleter_func del);
 
- private:
-  HazardRecord* const hazard_record_;
-  std::size_t hp_used_;
-};
+} __attribute__((aligned(CACHE_LINE_SIZE)));
 
 }
 
@@ -110,25 +96,29 @@ class hazard_ptr;
 template<int N>
 class hazard_array {
  public:
-  hazard_array() : local_data_(detail::LocalData::getLocalData()),
-                   array_(local_data_.allocateHpArray(N)), num_hp_(0) {
+  hazard_array() : hazard_record_(detail::HazardRecord::getLocalRecord()),
+                   hp_created_(0) {
+    if (N > 0)
+      hp_start_ = hazard_record_.reserveHp(N);
   }
 
   hazard_array(const hazard_array&) = delete;
   hazard_array& operator=(const hazard_array&) = delete;
 
   ~hazard_array() {
-    atomic::atomic_fence_release();
-    for (int i = 0; i < N; i++)
-      atomic::atomic_store_relaxed(array_ + i,
-                                   static_cast<const void*>(nullptr));
-    local_data_.deallocateHpArray(array_, N);
+    if (N > 0)
+      hazard_record_.returnHp(hp_start_, N);
   }
 
  private:
-  detail::LocalData& local_data_;
-  detail::hp_t* const array_;
-  int num_hp_;
+  detail::hp_t* nextHp() {
+    assert(hp_created_ < N);
+    return hazard_record_.getHp(hp_start_ + hp_created_++);
+  }
+
+  detail::HazardRecord& hazard_record_;
+  std::size_t hp_start_;
+  int hp_created_;
 
   template<typename T>
   friend class hazard_ptr;
@@ -155,9 +145,7 @@ class hazard_ptr {
    */
   template<int N>
   explicit hazard_ptr(hazard_array<N>& ha)
-      : local_data_(ha.local_data_), hp_(ha.array_ + ha.num_hp_++),
-        ptr_(nullptr) {
-    assert(ha.num_hp_ <= N);
+      : hazard_record_(ha.hazard_record_), hp_(ha.nextHp()), ptr_(nullptr) {
   }
 
   hazard_ptr(const hazard_ptr&) = delete;
@@ -248,7 +236,7 @@ class hazard_ptr {
     typedef typename std::remove_cv<U>::type UU;
     TT* obj = const_cast<TT*>(ptr_);
     reset();
-    local_data_.addRetired(obj, nullptr, detail::delete_deleter<TT, UU>);
+    hazard_record_.addRetired(obj, nullptr, detail::delete_deleter<TT, UU>);
   }
 
   /**
@@ -263,7 +251,7 @@ class hazard_ptr {
     typedef typename std::remove_cv<T>::type TT;
     TT* obj = const_cast<TT*>(ptr_);
     reset();
-    local_data_.addRetired(obj, alloc, detail::allocator_deleter<TT, Alloc>);
+    hazard_record_.addRetired(obj, alloc, detail::allocator_deleter<TT, Alloc>);
   }
 
   /**
@@ -297,28 +285,25 @@ class hazard_ptr {
   }
 
  private:
-  detail::LocalData& local_data_;
+  detail::HazardRecord& hazard_record_;
   detail::hp_t* hp_;
   T* ptr_;
 };
 
 /**
- * ハザードポインタが動作するために必要なスレッドローカルな環境を設定するための
- * クラス。ハザードポインタを利用するスレッドの先頭でこのインスタンスを生成して
- * おく必要がある。
+ * ハザードポインタが使用するスレッドローカルな環境を管理するためのクラス。
  * C++0xの Thread-local storage が正式にサポートされれば、
  * このクラスは不要になるはず……
  */
 class hazard_context {
  public:
-  hazard_context() : local_data_() {
-  }
-
+  hazard_context() = default;
   hazard_context(const hazard_context&) = delete;
   hazard_context& operator=(const hazard_context&) = delete;
 
- private:
-  detail::LocalData local_data_;
+  ~hazard_context() {
+    detail::HazardRecord::clearLocalRecord();
+  }
 };
 
 }
