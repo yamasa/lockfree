@@ -13,9 +13,9 @@
 // C++0xの std::atomic ではなく独自実装版を使用する。
 #include "atomic.h"
 
-// スレッド毎のハザードポインタの最大数。
-#ifndef HAZARD_PTR_SIZE
-#define HAZARD_PTR_SIZE 3
+// 一つのHazardBucketに格納されるハザードポインタの数。
+#ifndef HAZARD_BUCKET_SIZE
+#define HAZARD_BUCKET_SIZE 2
 #endif
 
 #ifndef CACHE_LINE_SIZE
@@ -53,13 +53,24 @@ void allocator_deleter(void* o, void* a) {
   alloc->deallocate(obj, 1);
 }
 
-typedef std::vector<RetiredItem> RetiredItems;
 typedef const void* hp_t;
+
+struct HazardBucket {
+  std::array<hp_t, HAZARD_BUCKET_SIZE> hp;
+  HazardBucket* next;
+  int active;
+
+  HazardBucket() : hp(), active(1) {
+  }
+} __attribute__((aligned(CACHE_LINE_SIZE)));
+
+typedef std::vector<HazardBucket*> HazardBuckets;
+typedef std::vector<RetiredItem> RetiredItems;
 
 struct HazardRecord {
   HazardRecord* next;
   std::size_t hp_reserved;
-  std::array<hp_t, HAZARD_PTR_SIZE> hp;
+  HazardBuckets hp_buckets;
   RetiredItems retired;
   int active;
 
@@ -75,7 +86,7 @@ struct HazardRecord {
 
   hp_t* getHp(std::size_t pos) {
     assert(pos < hp_reserved);
-    return &hp[pos];
+    return &hp_buckets[pos / HAZARD_BUCKET_SIZE]->hp[pos % HAZARD_BUCKET_SIZE];
   }
 
   void addRetired(void* obj, void* alloc, deleter_func del);
