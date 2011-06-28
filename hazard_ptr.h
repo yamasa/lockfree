@@ -33,7 +33,10 @@ struct RetiredItem {
   deleter_func deleter;
 
   void doDelete() {
-    deleter(object, allocator);
+    try {
+      deleter(object, allocator);
+    } catch(...) {
+    }
   }
 };
 

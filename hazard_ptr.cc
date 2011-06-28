@@ -33,19 +33,20 @@ class HazardRoot {
  private:
   typedef std::vector<const void*> ScanedSet;
 
-  void scanHp(ScanedSet& scaned);
+  bool scanHp(ScanedSet& scaned);
 
   static void deleteItems(const ScanedSet& scaned, RetiredItems& retired);
 
+  static void deleteAllItems(RetiredItems& retired);
+
   HazardRecord* hazard_record_head_;
   HazardBucket* hazard_bucket_head_;
-  std::mutex global_retired_mutex_;
-  RetiredItems global_retired_;
 };
 
 HazardRoot::~HazardRoot() {
   HazardRecord* record = hazard_record_head_;
   while (record) {
+    deleteAllItems(record->retired);
     HazardRecord* next = record->next;
     delete record;
     record = next;
@@ -57,9 +58,6 @@ HazardRoot::~HazardRoot() {
     delete bucket;
     bucket = next;
   }
-
-  for (auto item : global_retired_)
-    item.doDelete();
 }
 
 HazardRecord*
@@ -70,6 +68,7 @@ HazardRoot::allocateRecord() {
     int active = atomic::atomic_load_relaxed(&record->active);
     if (active == 0 && atomic::atomic_compare_and_set(&record->active, 0, 1)) {
       assert(record->hp_reserved == 0);
+      assert(record->hp_buckets.empty());
       return record;
     }
     record = record->next;
@@ -88,6 +87,8 @@ HazardRoot::allocateRecord() {
 
 void
 HazardRoot::deallocateRecord(HazardRecord* record) {
+  assert(record->hp_reserved == 0);
+
   // hp_buckets内の全てのHazardBucketを空き状態(active == 0)としてマークする。
   atomic::atomic_fence_release();
   for (HazardBucket* bucket : record->hp_buckets) {
@@ -95,18 +96,11 @@ HazardRoot::deallocateRecord(HazardRecord* record) {
   }
   record->hp_buckets.clear();
 
-  // 最後にもう一度 scan を行い、それでも record->retired に残ったものを
-  // global_retired_ に移しかえる。
-  ScanedSet scaned;
-  {
-    std::lock_guard<std::mutex> lk(global_retired_mutex_);
-    scanHp(scaned);
-    deleteItems(scaned, record->retired);
-    deleteItems(scaned, global_retired_);
-    global_retired_.insert(global_retired_.end(),
-                           record->retired.begin(), record->retired.end());
+  // retired 内のオブジェクトをできる限りdeleteする。
+  // (deleteしきれずに残ってしまってもよい。)
+  if (!record->retired.empty()) {
+    flushRetired(record->retired);
   }
-  record->retired.clear();
 
   // record を空き状態(active == 0)としてマークする。
   atomic::atomic_store_release(&record->active, 0);
@@ -137,12 +131,18 @@ HazardRoot::allocateBucket() {
 
 void
 HazardRoot::flushRetired(RetiredItems& retired) {
-  ScanedSet scaned;
-  scanHp(scaned);
-  deleteItems(scaned, retired);
+  try {
+    ScanedSet scaned;
+    if (scanHp(scaned)) {
+      deleteItems(scaned, retired);
+    } else {
+      deleteAllItems(retired);
+    }
+  } catch(...) {
+  }
 }
 
-void
+bool
 HazardRoot::scanHp(ScanedSet& scaned) {
   atomic::atomic_fence_seq_cst();
   HazardBucket* bucket = atomic::atomic_load_acquire(&hazard_bucket_head_);
@@ -157,20 +157,15 @@ HazardRoot::scanHp(ScanedSet& scaned) {
   atomic::atomic_fence_acquire();
 
   if (scaned.empty())
-    return;
+    return false;
+
   std::sort(scaned.begin(), scaned.end());
   scaned.erase(std::unique(scaned.begin(), scaned.end()), scaned.end());
+  return true;
 }
 
 void
 HazardRoot::deleteItems(const ScanedSet& scaned, RetiredItems& retired) {
-  if (scaned.empty()) {
-    for (auto item : retired)
-      item.doDelete();
-    retired.clear();
-    return;
-  }
-
   // この実装では、スキャンしたハザードポインタの内容を std::vector に格納し、
   // sort → unique → binary_search という手順でdelete可能かチェックしている。
   // しかし、代わりにOpen Addressing方式のHash Tableや、Bloom Filterを使うと
@@ -187,6 +182,13 @@ HazardRoot::deleteItems(const ScanedSet& scaned, RetiredItems& retired) {
             }
           }),
       retired.end());
+}
+
+void
+HazardRoot::deleteAllItems(RetiredItems& retired) {
+  for (auto item : retired)
+    item.doDelete();
+  retired.clear();
 }
 
 HazardRoot hazard_root;
@@ -213,7 +215,6 @@ void
 HazardRecord::clearLocalRecord() {
   HazardRecord* record = local_record;
   if (record) {
-    assert(record->hp_reserved == 0);
     local_record = nullptr;
     hazard_root.deallocateRecord(record);
   }
