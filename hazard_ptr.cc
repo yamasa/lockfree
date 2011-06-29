@@ -28,11 +28,9 @@ class HazardRoot {
 
   HazardBucket* allocateBucket();
 
-  void flushRetired(RetiredItems& retired);
+  void flushRetired(HazardRecord* record);
 
  private:
-  typedef std::vector<const void*> ScanedSet;
-
   bool scanHp(ScanedSet& scaned);
 
   static void deleteItems(const ScanedSet& scaned, RetiredItems& retired);
@@ -99,7 +97,7 @@ HazardRoot::deallocateRecord(HazardRecord* record) {
   // retired 内のオブジェクトをできる限りdeleteする。
   // (deleteしきれずに残ってしまってもよい。)
   if (!record->retired.empty()) {
-    flushRetired(record->retired);
+    flushRetired(record);
   }
 
   // record を空き状態(active == 0)としてマークする。
@@ -130,13 +128,12 @@ HazardRoot::allocateBucket() {
 }
 
 void
-HazardRoot::flushRetired(RetiredItems& retired) {
+HazardRoot::flushRetired(HazardRecord* record) {
   try {
-    ScanedSet scaned;
-    if (scanHp(scaned)) {
-      deleteItems(scaned, retired);
+    if (scanHp(record->scaned)) {
+      deleteItems(record->scaned, record->retired);
     } else {
-      deleteAllItems(retired);
+      deleteAllItems(record->retired);
     }
   } catch(...) {
   }
@@ -145,6 +142,7 @@ HazardRoot::flushRetired(RetiredItems& retired) {
 bool
 HazardRoot::scanHp(ScanedSet& scaned) {
   atomic::atomic_fence_seq_cst();
+  scaned.clear();
   HazardBucket* bucket = atomic::atomic_load_acquire(&hazard_bucket_head_);
   while (bucket) {
     for (const hp_t& h : bucket->hp) {
@@ -250,7 +248,7 @@ HazardRecord::addRetired(void* obj, void* alloc, deleter_func del) {
   if (!obj) return;
   retired.push_back({obj, alloc, del});
   if (retired.size() >= HAZARD_FLUSH_SIZE)
-    hazard_root.flushRetired(retired);
+    hazard_root.flushRetired(this);
 }
 
 }

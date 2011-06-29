@@ -69,12 +69,14 @@ struct HazardBucket {
 
 typedef std::vector<HazardBucket*> HazardBuckets;
 typedef std::vector<RetiredItem> RetiredItems;
+typedef std::vector<const void*> ScanedSet;
 
 struct HazardRecord {
   HazardRecord* next;
   std::size_t hp_reserved;
   HazardBuckets hp_buckets;
   RetiredItems retired;
+  ScanedSet scaned;
   int active;
 
   HazardRecord();
