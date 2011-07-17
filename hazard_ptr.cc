@@ -65,7 +65,7 @@ HazardRoot::allocateRecord() {
   while (record) {
     int active = atomic::atomic_load_relaxed(&record->active);
     if (active == 0 && atomic::atomic_compare_and_set(&record->active, 0, 1)) {
-      assert(record->hp_reserved == 0);
+      assert(record->buckets_in_use == 0);
       assert(record->hp_buckets.empty());
       return record;
     }
@@ -85,7 +85,7 @@ HazardRoot::allocateRecord() {
 
 void
 HazardRoot::deallocateRecord(HazardRecord* record) {
-  assert(record->hp_reserved == 0);
+  assert(record->buckets_in_use == 0);
 
   // hp_buckets内の全てのHazardBucketを空き状態(active == 0)としてマークする。
   atomic::atomic_fence_release();
@@ -195,16 +195,23 @@ __thread HazardRecord* local_record(nullptr);
 
 }
 
-HazardRecord::HazardRecord() : hp_reserved(0), active(1) {
+HazardRecord::HazardRecord() : buckets_in_use(0), active(1) {
   retired.reserve(HAZARD_FLUSH_SIZE);
 }
 
 HazardRecord&
-HazardRecord::getLocalRecord() {
+HazardRecord::getLocalRecord(std::size_t num_buckets) {
   HazardRecord* record = local_record;
   if (!record) {
     record = hazard_root.allocateRecord();
     local_record = record;
+  }
+  HazardBuckets& buckets = record->hp_buckets;
+  num_buckets += record->buckets_in_use;
+  if (buckets.size() < num_buckets) {
+    buckets.reserve(num_buckets);
+    for (std::size_t i = buckets.size(); i < num_buckets; i++)
+      buckets.push_back(hazard_root.allocateBucket());
   }
   return *record;
 }
@@ -216,31 +223,6 @@ HazardRecord::clearLocalRecord() {
     local_record = nullptr;
     hazard_root.deallocateRecord(record);
   }
-}
-
-std::size_t
-HazardRecord::reserveHp(std::size_t num) {
-  std::size_t start = hp_reserved;
-  std::size_t end = start + num;
-  if (end > hp_buckets.size() * HAZARD_BUCKET_SIZE) {
-    std::size_t needs = (end - (hp_buckets.size() * HAZARD_BUCKET_SIZE) +
-                         HAZARD_BUCKET_SIZE - 1) / HAZARD_BUCKET_SIZE;
-    hp_buckets.reserve(hp_buckets.size() + needs);
-    for (std::size_t i = 0; i < needs; i++)
-      hp_buckets.push_back(hazard_root.allocateBucket());
-  }
-  hp_reserved = end;
-  return start;
-}
-
-void
-HazardRecord::returnHp(std::size_t start, std::size_t num) {
-  atomic::atomic_fence_release();
-  for (std::size_t i = 0; i < num; i++)
-    atomic::atomic_store_relaxed(getHp(start + i),
-                                 static_cast<const void*>(nullptr));
-  hp_reserved -= num;
-  assert(start == hp_reserved);
 }
 
 void

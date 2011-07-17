@@ -73,7 +73,7 @@ typedef std::vector<const void*> ScanedSet;
 
 struct HazardRecord {
   HazardRecord* next;
-  std::size_t hp_reserved;
+  std::size_t buckets_in_use;
   HazardBuckets hp_buckets;
   RetiredItems retired;
   ScanedSet scaned;
@@ -81,17 +81,13 @@ struct HazardRecord {
 
   HazardRecord();
 
-  static HazardRecord& getLocalRecord();
+  static HazardRecord& getLocalRecord(std::size_t num_buckets);
 
   static void clearLocalRecord();
 
-  std::size_t reserveHp(std::size_t num);
-
-  void returnHp(std::size_t start, std::size_t num);
-
-  hp_t* getHp(std::size_t pos) {
-    assert(pos < hp_reserved);
-    return &hp_buckets[pos / HAZARD_BUCKET_SIZE]->hp[pos % HAZARD_BUCKET_SIZE];
+  hp_t* getHp(std::size_t start_bucket, std::size_t offset) {
+    return &hp_buckets[start_bucket + offset / HAZARD_BUCKET_SIZE]->
+        hp[offset % HAZARD_BUCKET_SIZE];
   }
 
   void addRetired(void* obj, void* alloc, deleter_func del);
@@ -112,28 +108,37 @@ class hazard_ptr;
 template<int N>
 class hazard_array {
  public:
-  hazard_array() : hazard_record_(detail::HazardRecord::getLocalRecord()),
-                   hp_created_(0) {
-    if (N > 0)
-      hp_start_ = hazard_record_.reserveHp(N);
+  hazard_array()
+  : hazard_record_(detail::HazardRecord::getLocalRecord(numBuckets())),
+    hp_created_(0) {
+    if (N > 0) {
+      start_bucket_ = hazard_record_.buckets_in_use;
+      hazard_record_.buckets_in_use = start_bucket_ + numBuckets();
+    }
   }
 
   hazard_array(const hazard_array&) = delete;
   hazard_array& operator=(const hazard_array&) = delete;
 
   ~hazard_array() {
-    if (N > 0)
-      hazard_record_.returnHp(hp_start_, N);
+    if (N > 0) {
+      assert(hazard_record_.buckets_in_use == start_bucket_ + numBuckets());
+      hazard_record_.buckets_in_use = start_bucket_;
+    }
   }
 
  private:
+  static std::size_t numBuckets() {
+    return (N + HAZARD_BUCKET_SIZE - 1) / HAZARD_BUCKET_SIZE;
+  }
+
   detail::hp_t* nextHp() {
     assert(hp_created_ < N);
-    return hazard_record_.getHp(hp_start_ + hp_created_++);
+    return hazard_record_.getHp(start_bucket_, hp_created_++);
   }
 
   detail::HazardRecord& hazard_record_;
-  std::size_t hp_start_;
+  std::size_t start_bucket_;
   int hp_created_;
 
   template<typename T>
@@ -166,6 +171,10 @@ class hazard_ptr {
 
   hazard_ptr(const hazard_ptr&) = delete;
   hazard_ptr& operator=(const hazard_ptr&) = delete;
+
+  ~hazard_ptr() {
+    reset();
+  }
 
   /**
    * アトミックなポインタ変数から値を読み出し、このハザードポインタに格納する。
