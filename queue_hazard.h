@@ -15,7 +15,7 @@ struct QueueBase {
   NodeBase* head_;
   NodeBase* tail_;
 
-  void init(NodeBase* dummy) {
+  QueueBase(NodeBase* dummy) {
     head_ = dummy;
     tail_ = dummy;
   }
@@ -72,63 +72,35 @@ struct Node : NodeBase {
  * hazard_ptrを使用したlock-freeキュー。
  * tagged_ptr版と異なり、テンプレート引数 T には任意の型を指定することができる。
  */
-template<typename T, typename Alloc = std::allocator<T>>
+template<typename T>
 class Queue {
  private:
   typedef detail::Node<T> Node;
-  typedef typename Alloc::template rebind<Node>::other NodeAlloc;
 
-  struct QueueImpl : NodeAlloc, detail::QueueBase {
-    QueueImpl(const Alloc& alloc) : NodeAlloc(alloc) {
-    }
-  };
-
-  QueueImpl impl_;
-
-  detail::QueueBase& base() {
-    return static_cast<detail::QueueBase&>(impl_);
-  }
-
-  NodeAlloc& nodeAlloc() {
-    return static_cast<NodeAlloc&>(impl_);
-  }
-
-  Node* newNode() {
-    Node* node = nodeAlloc().allocate(1);
-    nodeAlloc().construct(node);
-    return node;
-  }
+  detail::QueueBase base_;
 
   template<typename... Args>
   Node* newNodeAndValue(Args&&... args) {
-    Node* node = newNode();
-    Alloc(nodeAlloc()).construct(&node->u.value, std::forward<Args>(args)...);
+    Node* node = new Node;
+    new (&node->u.value) T(std::forward<Args>(args)...);
     return node;
   }
 
   void clearValue(Node* node) {
-    Alloc(nodeAlloc()).destroy(&node->u.value);
-  }
-
-  void deleteNode(Node* node) {
-    nodeAlloc().destroy(node);
-    nodeAlloc().deallocate(node, 1);
+    node->u.value.~T();
   }
 
  public:
-  explicit
-  Queue(const Alloc& alloc = Alloc()) : impl_(alloc) {
-    base().init(newNode());
-  }
+  Queue() : base_(new Node) {}
 
   Queue(const Queue&) = delete;
   Queue& operator=(const Queue&) = delete;
 
   ~Queue() {
-    detail::NodeBase* node = base().head_;
+    detail::NodeBase* node = base_.head_;
     for (;;) {
       detail::NodeBase* next = node->next;
-      deleteNode(static_cast<Node*>(node));
+      delete static_cast<Node*>(node);
       if (!next) break;
       node = next;
       clearValue(static_cast<Node*>(node));
@@ -141,7 +113,7 @@ class Queue {
    */
   template<typename... Args>
   void enqueue(Args&&... args) {
-    base().enqueue(newNodeAndValue(std::forward<Args>(args)...));
+    base_.enqueue(newNodeAndValue(std::forward<Args>(args)...));
   }
 
   /**
@@ -170,7 +142,7 @@ class Queue {
     hazard::hazard_ptr<detail::NodeBase> head_hp(hg);
     hazard::hazard_ptr<detail::NodeBase> next_hp(hg);
 
-    if (!base().dequeue(head_hp, next_hp))
+    if (!base_.dequeue(head_hp, next_hp))
       return false;
 
     Node* node = static_cast<Node*>(next_hp.get());
@@ -178,96 +150,9 @@ class Queue {
     clearValue(node);
     next_hp.reset();
 
-    head_hp.retire(&nodeAlloc());
+    head_hp.retire<Node>();
     return true;
   }
-};
-
-template<typename T>
-class QueueNodePoolAllocator : public std::allocator<T> {
- public:
-  typedef T value_type;
-
-  template<typename U>
-  struct rebind {
-    typedef QueueNodePoolAllocator<U> other;
-  };
-
-  QueueNodePoolAllocator() {
-  }
-
-  template<typename U>
-  QueueNodePoolAllocator(const QueueNodePoolAllocator<U>&) {
-  }
-};
-
-/**
- * lockfree_hazard::Queue向けの、Nodeを内部でプールするアロケータ。
- */
-template<typename T>
-class QueueNodePoolAllocator<detail::Node<T>> {
- public:
-  typedef detail::Node<T> value_type;
-  typedef value_type* pointer;
-
-  template<typename U>
-  struct rebind {
-    typedef QueueNodePoolAllocator<U> other;
-  };
-
-  QueueNodePoolAllocator() : pool_(nullptr) {
-  }
-
-  template<typename U>
-  QueueNodePoolAllocator(const QueueNodePoolAllocator<U>&) : pool_(nullptr) {
-  }
-
-  ~QueueNodePoolAllocator() {
-    detail::NodeBase* node = pool_;
-    while (node) {
-      detail::NodeBase* next = node->next;
-      delete static_cast<pointer>(node);
-      node = next;
-    }
-  }
-
-  pointer allocate(std::size_t n, const void* = 0) {
-    assert(n == 1);
-    if (!atomic::atomic_load_relaxed(&pool_))
-      return new value_type();
-
-    hazard::hazard_group<1> hg;
-    hazard::hazard_ptr<detail::NodeBase> pool_hp(hg);
-    for (;;) {
-      if (!pool_hp.load_from(&pool_))
-        return new value_type();
-      detail::NodeBase* next = atomic::atomic_load_relaxed(&pool_hp->next);
-      if (atomic::atomic_compare_and_set(&pool_, pool_hp.get(), next)) {
-        atomic::atomic_store_relaxed(&pool_hp->next,
-                                     static_cast<detail::NodeBase*>(nullptr));
-        return static_cast<pointer>(pool_hp.get());
-      }
-    }
-  }
-
-  void deallocate(pointer node, std::size_t n) {
-    assert(n == 1);
-    detail::NodeBase* p;
-    do {
-      p = atomic::atomic_load_relaxed(&pool_);
-      node->next = p;
-    } while (!atomic::atomic_compare_and_set(
-        &pool_, p, static_cast<detail::NodeBase*>(node)));
-  }
-
-  void construct(pointer p) {
-  }
-
-  void destroy(pointer p) {
-  }
-
- private:
-  detail::NodeBase* pool_;
 };
 
 }

@@ -25,35 +25,25 @@
 namespace hazard {
 namespace detail {
 
-typedef void (*deleter_func)(void*, void*);
+typedef void (*deleter_func)(void*);
 
 struct RetiredItem {
   void* object;
-  void* allocator;
   deleter_func deleter;
 
   void doDelete() {
     try {
-      deleter(object, allocator);
+      deleter(object);
     } catch(...) {
     }
   }
 };
 
 template<typename T, typename U>
-void delete_deleter(void* o, void* a) {
+void delete_deleter(void* o) {
   // 多重継承の場合でも正しいアドレスが得られるように、
   // void* → T* → U* と2段階に static_cast している。
   delete static_cast<U*>(static_cast<T*>(o));
-}
-
-template<typename T, typename Alloc>
-void allocator_deleter(void* o, void* a) {
-  Alloc* alloc = static_cast<Alloc*>(a);
-  typedef typename Alloc::pointer pointer;
-  pointer obj = static_cast<pointer>(static_cast<T*>(o));
-  alloc->destroy(obj);
-  alloc->deallocate(obj, 1);
 }
 
 typedef const void* hp_t;
@@ -90,7 +80,7 @@ struct HazardRecord {
         hp[offset % HAZARD_BUCKET_SIZE];
   }
 
-  void addRetired(void* obj, void* alloc, deleter_func del);
+  void addRetired(void* obj, deleter_func del);
 
 } __attribute__((aligned(CACHE_LINE_SIZE)));
 
@@ -261,22 +251,7 @@ class hazard_ptr {
     typedef typename std::remove_cv<U>::type UU;
     TT* obj = const_cast<TT*>(ptr_);
     reset();
-    hazard_record_.addRetired(obj, nullptr, detail::delete_deleter<TT, UU>);
-  }
-
-  /**
-   * 引数無しの retire() と同様だが、オブジェクトの破棄は引数のアロケータに
-   * よって行なわれる。
-   * 注意すべき点として、オブジェクトの破棄は長期間保留されることがあるので、
-   * アロケータの寿命は少なくともハザードポインタを使用する各スレッドよりも
-   * 長くなくてはならない。
-   */
-  template<typename Alloc>
-  void retire(Alloc* alloc) {
-    typedef typename std::remove_cv<T>::type TT;
-    TT* obj = const_cast<TT*>(ptr_);
-    reset();
-    hazard_record_.addRetired(obj, alloc, detail::allocator_deleter<TT, Alloc>);
+    hazard_record_.addRetired(obj, detail::delete_deleter<TT, UU>);
   }
 
   /**

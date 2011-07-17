@@ -6,10 +6,6 @@
 
 lockfree_hazard::Queue<uintptr_t> queue;
 
-// QueueNodePoolAllocatorを使用するバージョン。でもあまり速くない。
-// FreeBSD 9-current, Core 2 Duo機では、むしろ上のほうが速い。
-//lockfree_hazard::Queue<uintptr_t, lockfree_hazard::QueueNodePoolAllocator<uintptr_t>> queue;
-
 pthread_barrier_t barrier;
 
 /**

@@ -226,9 +226,9 @@ HazardRecord::clearLocalRecord() {
 }
 
 void
-HazardRecord::addRetired(void* obj, void* alloc, deleter_func del) {
+HazardRecord::addRetired(void* obj, deleter_func del) {
   if (!obj) return;
-  retired.push_back({obj, alloc, del});
+  retired.push_back({obj, del});
   if (retired.size() >= HAZARD_FLUSH_SIZE)
     hazard_root.flushRetired(this);
 }
