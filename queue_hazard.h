@@ -21,8 +21,8 @@ struct QueueBase {
   }
 
   void enqueue(NodeBase* node) {
-    hazard::hazard_array<1> ha;
-    hazard::hazard_ptr<NodeBase> tail_hp(ha);
+    hazard::hazard_group<1> hg;
+    hazard::hazard_ptr<NodeBase> tail_hp(hg);
     for (;;) {
       tail_hp.load_from(&tail_);
       NodeBase* next = atomic::atomic_load_acquire(&tail_hp->next);
@@ -166,9 +166,9 @@ class Queue {
    */
   template<typename Function>
   bool dequeue(Function receiver) {
-    hazard::hazard_array<2> ha;
-    hazard::hazard_ptr<detail::NodeBase> head_hp(ha);
-    hazard::hazard_ptr<detail::NodeBase> next_hp(ha);
+    hazard::hazard_group<2> hg;
+    hazard::hazard_ptr<detail::NodeBase> head_hp(hg);
+    hazard::hazard_ptr<detail::NodeBase> next_hp(hg);
 
     if (!base().dequeue(head_hp, next_hp))
       return false;
@@ -236,8 +236,8 @@ class QueueNodePoolAllocator<detail::Node<T>> {
     if (!atomic::atomic_load_relaxed(&pool_))
       return new value_type();
 
-    hazard::hazard_array<1> ha;
-    hazard::hazard_ptr<detail::NodeBase> pool_hp(ha);
+    hazard::hazard_group<1> hg;
+    hazard::hazard_ptr<detail::NodeBase> pool_hp(hg);
     for (;;) {
       if (!pool_hp.load_from(&pool_))
         return new value_type();

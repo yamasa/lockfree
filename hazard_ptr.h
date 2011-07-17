@@ -106,9 +106,9 @@ class hazard_ptr;
  * テンプレート引数には、生成する hazard_ptr の個数を指定する。
  */
 template<int N>
-class hazard_array {
+class hazard_group {
  public:
-  hazard_array()
+  hazard_group()
   : hazard_record_(detail::HazardRecord::getLocalRecord(numBuckets())),
     hp_created_(0) {
     if (N > 0) {
@@ -117,10 +117,10 @@ class hazard_array {
     }
   }
 
-  hazard_array(const hazard_array&) = delete;
-  hazard_array& operator=(const hazard_array&) = delete;
+  hazard_group(const hazard_group&) = delete;
+  hazard_group& operator=(const hazard_group&) = delete;
 
-  ~hazard_array() {
+  ~hazard_group() {
     if (N > 0) {
       assert(hazard_record_.buckets_in_use == start_bucket_ + numBuckets());
       hazard_record_.buckets_in_use = start_bucket_;
@@ -159,14 +159,14 @@ class hazard_ptr {
 
   /**
    * 新しい hazard_ptr インスタンスを生成する。
-   * 一つの hazard_array インスタンスに対しては、そのテンプレート引数の
+   * 一つの hazard_group インスタンスに対しては、そのテンプレート引数の
    * N 個だけ hazard_ptr インスタンスを生成することができる。
-   * 生成された hazard_ptr は、元の hazard_array インスタンスの
+   * 生成された hazard_ptr は、元の hazard_group インスタンスの
    * 生存期間でのみ使用することができる。
    */
   template<int N>
-  explicit hazard_ptr(hazard_array<N>& ha)
-      : hazard_record_(ha.hazard_record_), hp_(ha.nextHp()), ptr_(nullptr) {
+  explicit hazard_ptr(hazard_group<N>& hg)
+      : hazard_record_(hg.hazard_record_), hp_(hg.nextHp()), ptr_(nullptr) {
   }
 
   hazard_ptr(const hazard_ptr&) = delete;
@@ -281,7 +281,7 @@ class hazard_ptr {
 
   /**
    * 他のハザードポインタと、保持しているポインタの値を交換する。
-   * 交換相手のハザードポインタは、同じ hazard_array から生成されたもので
+   * 交換相手のハザードポインタは、同じ hazard_group から生成されたもので
    * なければならない。
    */
   void swap(hazard_ptr& h) {

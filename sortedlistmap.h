@@ -144,9 +144,9 @@ class SortedListMap {
    * 同値のノードが無ければ何もせずfalseを返す。
    */
   bool get(const K& key, V* out) {
-    hazard::hazard_array<2> ha;
-    HazardPtr prev_hp(ha);
-    HazardPtr curr_hp(ha);
+    hazard::hazard_group<2> hg;
+    HazardPtr prev_hp(hg);
+    HazardPtr curr_hp(hg);
     MarkablePtr curr_next;
 
     prev_hp.reset_dummy_pointer(&head_);
@@ -166,9 +166,9 @@ class SortedListMap {
   bool put(const K& key, const V& value, V* out = nullptr) {
     Node* node = new Node(key, value);
 
-    hazard::hazard_array<2> ha;
-    HazardPtr prev_hp(ha);
-    HazardPtr curr_hp(ha);
+    hazard::hazard_group<2> hg;
+    HazardPtr prev_hp(hg);
+    HazardPtr curr_hp(hg);
     MarkablePtr curr_next;
 
     prev_hp.reset_dummy_pointer(&head_);
@@ -198,9 +198,9 @@ class SortedListMap {
    * 同値のノードが無ければ何もせずfalseを返す。
    */
   bool remove(const K& key, V* out = nullptr) {
-    hazard::hazard_array<2> ha;
-    HazardPtr prev_hp(ha);
-    HazardPtr curr_hp(ha);
+    hazard::hazard_group<2> hg;
+    HazardPtr prev_hp(hg);
+    HazardPtr curr_hp(hg);
     MarkablePtr curr_next;
 
     prev_hp.reset_dummy_pointer(&head_);
@@ -222,10 +222,10 @@ class SortedListMap {
    */
   template<typename Function>
   void forEach(Function function) {
-    hazard::hazard_array<3> ha;
-    HazardPtr prev_hp(ha);
-    HazardPtr curr_hp(ha);
-    HazardPtr skip_hp(ha);
+    hazard::hazard_group<3> hg;
+    HazardPtr prev_hp(hg);
+    HazardPtr curr_hp(hg);
+    HazardPtr skip_hp(hg);
 
    retry0:
     prev_hp.reset_dummy_pointer(&head_);
